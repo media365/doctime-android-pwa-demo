@@ -1,8 +1,9 @@
-name: security-gate
+name: code-security-check
 
 # Supply-chain / IOC guard. Runs first on every PR into the protected
 # branches; deploy workflows should be gated behind this via branch
-# protection ("Require status checks to pass before merging" -> guard).
+# protection ("Require status checks to pass before merging" ->
+# code-security-check).
 on:
   pull_request:
     branches: [dev, uat, main]
@@ -12,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  guard:
+  code-security-check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
