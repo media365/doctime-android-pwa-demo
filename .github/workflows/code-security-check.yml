@@ -35,8 +35,25 @@ jobs:
           VER=8.18.4
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
             | tar -xz -C /tmp gitleaks
-          /tmp/gitleaks detect --no-git --source . --redact --no-banner --exit-code 1 \
-            || { echo "::error::gitleaks found potential secrets in the working tree"; exit 1; }
+          if /tmp/gitleaks detect --no-git --source . --redact --no-banner \
+               --report-format json --report-path /tmp/gl.json --exit-code 1; then
+            echo "✅ No committed secrets found."
+          else
+            echo ""
+            echo "  ❌ Committed secrets detected (values redacted below):"
+            if [ -s /tmp/gl.json ]; then
+              jq -r '.[] | "     • \(.File):\(.StartLine)  [\(.RuleID)]"' /tmp/gl.json | sort -u
+              # one inline PR annotation per affected file
+              jq -r '.[] | "::error file=\(.File),line=\(.StartLine),title=Committed secret (\(.RuleID))::A credential matching rule \(.RuleID) is committed here. Rotate it now, then git rm --cached this file and add it to .gitignore."' /tmp/gl.json | sort -u
+            fi
+            echo ""
+            echo "     Reason: real credentials committed to the repo are readable by anyone with"
+            echo "             repo access and were exposed to any build-time malware."
+            echo "     Action: 1) ROTATE each secret above immediately (it is already exposed in git history),"
+            echo "             2) 'git rm --cached <file>' and add the path to .gitignore,"
+            echo "             3) if it must exist for CI, move it to encrypted GitHub Actions secrets."
+            exit 1
+          fi
 
       # 3) Dependency lockfile integrity — advisory (never blocks the gate).
       #    Uses the repo's ACTUAL package manager (matches the Dockerfile),
