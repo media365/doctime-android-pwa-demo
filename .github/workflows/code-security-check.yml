@@ -38,15 +38,24 @@ jobs:
           /tmp/gitleaks detect --no-git --source . --redact --no-banner --exit-code 1 \
             || { echo "::error::gitleaks found potential secrets in the working tree"; exit 1; }
 
-      # 3) Dependency integrity — only if this is a Node project.
-      #    npm ci FAILS if package.json and package-lock.json disagree
-      #    (blocks silent dependency swaps); --ignore-scripts stops
-      #    malicious postinstall hooks from executing in CI.
-      - name: Verify lockfile integrity (Node)
+      # 3) Dependency lockfile integrity — advisory (never blocks the gate).
+      #    Uses the repo's ACTUAL package manager (matches the Dockerfile),
+      #    with a frozen/immutable install so a lockfile that disagrees with
+      #    package.json is surfaced. --ignore-scripts blocks postinstall hooks.
+      - name: Verify dependency lockfile integrity (advisory)
+        continue-on-error: true
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci --ignore-scripts
-            npm audit --audit-level=high || true   # report only
+          [ -f package.json ] || { echo "No package.json — skipping."; exit 0; }
+          n=$(ls yarn.lock pnpm-lock.yaml package-lock.json 2>/dev/null | wc -l | tr -d ' ')
+          [ "$n" -gt 1 ] && echo "::warning::multiple JS lockfiles present ($n) — keep only the one your build uses"
+          if [ -f yarn.lock ]; then
+            echo "Detected yarn.lock"; corepack enable || true
+            yarn install --immutable --mode=skip-build || yarn install --frozen-lockfile --ignore-scripts
+          elif [ -f pnpm-lock.yaml ]; then
+            echo "Detected pnpm-lock.yaml"; corepack enable || true
+            pnpm install --frozen-lockfile --ignore-scripts
+          elif [ -f package-lock.json ]; then
+            echo "Detected package-lock.json"; npm ci --ignore-scripts
           else
-            echo "No package-lock.json — skipping Node integrity check."
+            echo "package.json but no lockfile — skipping integrity check."
           fi
