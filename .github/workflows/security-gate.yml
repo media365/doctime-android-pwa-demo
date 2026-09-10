@@ -1,0 +1,51 @@
+name: security-gate
+
+# Supply-chain / IOC guard. Runs first on every PR into the protected
+# branches; deploy workflows should be gated behind this via branch
+# protection ("Require status checks to pass before merging" -> guard).
+on:
+  pull_request:
+    branches: [dev, uat, main]
+
+# Least privilege: only needs to read the code.
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 1) Custom IOC / malware signature gate
+      - name: Malware & IOC gate
+        run: |
+          chmod +x scripts/malware-gate.sh
+          scripts/malware-gate.sh
+
+      # 2) Secret scan via gitleaks binary (no org license required).
+      #    --no-git scans the current working tree, so historical secrets
+      #    don't block PRs; new committed secrets do.
+      - name: Secret scan (gitleaks)
+        run: |
+          VER=8.18.4
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          /tmp/gitleaks detect --no-git --source . --redact --no-banner --exit-code 1 \
+            || { echo "::error::gitleaks found potential secrets in the working tree"; exit 1; }
+
+      # 3) Dependency integrity — only if this is a Node project.
+      #    npm ci FAILS if package.json and package-lock.json disagree
+      #    (blocks silent dependency swaps); --ignore-scripts stops
+      #    malicious postinstall hooks from executing in CI.
+      - name: Verify lockfile integrity (Node)
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --ignore-scripts
+            npm audit --audit-level=high || true   # report only
+          else
+            echo "No package-lock.json — skipping Node integrity check."
+          fi
