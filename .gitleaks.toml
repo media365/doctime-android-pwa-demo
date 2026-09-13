@@ -30,4 +30,9 @@ paths = [
 regexes = [
   '''(?i)(example|dummy|sample|placeholder|changeme|fake|test[-_ ]?key|your[-_ ]?(api[-_ ]?)?key|xxxxx+)''',
   '''_12345''',
+  # Google/Firebase API keys (AIza...) are client-side project identifiers that
+  # ship in web/mobile builds — NOT secrets. Real protection = GCP API-key
+  # restrictions + Firebase App Check, not hiding them. (Service-account creds
+  # are JSON, not AIza, and are still caught.)
+  '''AIza[0-9A-Za-z_\-]{10,}''',
 ]
