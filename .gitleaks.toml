@@ -1,0 +1,41 @@
+# .gitleaks.toml — org-wide secret-scan config for the code-security-check gate.
+#
+# It KEEPS every built-in gitleaks rule (useDefault = true), so real secrets
+# (AWS/GCP/DB/private keys, tokens, etc.) are still detected everywhere. It only
+# suppresses two categories of proven NON-secrets that were creating noise:
+#   1) fake fixtures inside test suites, and
+#   2) client-side (public-by-design) keys such as a browser Google Maps key.
+#
+# Do NOT add real secrets to the allowlist — rotate and remove those instead.
+title = "media365 code-security-check gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore test fixtures and client-side public keys; real secrets are still caught elsewhere"
+
+# Path exclusions (matched against the file path).
+paths = [
+  '''(^|/)tests?/''',                                  # test suites carry deliberately-fake credentials
+  '''\.env\.example$''',                               # documented sample env, no real values
+  '''(^|/)resources/js/.*[Gg]oogle[Mm]aps.*\.js$''',   # client-side Maps key (restrict in the GCP console instead)
+  '''(^|/)google-services\.json$''',                   # Firebase Android config — keys ship in the APK (client-side)
+  '''(^|/)GoogleService-Info\.plist$''',               # Firebase iOS config — client-side
+  '''(^|/)firebase_app_id_file\.json$''',              # Firebase CLI-generated client config
+]
+
+# Value patterns (matched against the detected secret) — extra safety net so
+# obviously-fake strings are ignored even outside test folders.
+regexes = [
+  '''(?i)(example|dummy|sample|placeholder|changeme|fake|test[-_ ]?key|your[-_ ]?(api[-_ ]?)?key|xxxxx+)''',
+  '''_12345''',
+  # Google/Firebase API keys (AIza...) are client-side project identifiers that
+  # ship in web/mobile builds — NOT secrets. Real protection = GCP API-key
+  # restrictions + Firebase App Check, not hiding them. (Service-account creds
+  # are JSON, not AIza, and are still caught.)
+  '''AIza[0-9A-Za-z_\-]{10,}''',
+  # base64-encoded Google/Firebase API keys (some apps store them base64 and
+  # decode at runtime). base64("AIza") == "QUl6". Still client-side, not secret.
+  '''QUl6[A-Za-z0-9+/_=-]{10,}''',
+]

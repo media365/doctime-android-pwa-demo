@@ -1,0 +1,80 @@
+name: Code Security Check
+
+# Supply-chain / IOC guard. Runs first on every PR into the protected
+# branches; deploy workflows should be gated behind this via branch
+# protection ("Require status checks to pass before merging" ->
+# supply-chain-scan).
+on:
+  push:
+    branches: [ dev, uat, main ]
+  pull_request:
+    branches: [dev, uat, main]
+
+# Least privilege: only needs to read the code.
+permissions:
+  contents: read
+
+jobs:
+  supply-chain-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 1) Custom IOC / malware signature gate
+      - name: Malware & IOC gate
+        run: |
+          chmod +x scripts/malware-gate.sh
+          scripts/malware-gate.sh
+
+      # 2) Secret scan via gitleaks binary (no org license required).
+      #    --no-git scans the current working tree, so historical secrets
+      #    don't block PRs; new committed secrets do.
+      - name: Secret scan (gitleaks)
+        run: |
+          VER=8.18.4
+          curl --proto '=https' --tlsv1.2 -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          if /tmp/gitleaks detect --no-git --source . --redact --no-banner \
+               --report-format json --report-path /tmp/gl.json --exit-code 1; then
+            echo "✅ No committed secrets found."
+          else
+            echo ""
+            echo "  ❌ Committed secrets detected (values redacted below):"
+            if [ -s /tmp/gl.json ]; then
+              jq -r '.[] | "     • \(.File):\(.StartLine)  [\(.RuleID)]"' /tmp/gl.json | sort -u
+              # one inline PR annotation per affected file
+              jq -r '.[] | "::error file=\(.File),line=\(.StartLine),title=Committed secret (\(.RuleID))::A credential matching rule \(.RuleID) is committed here. Rotate it now, then git rm --cached this file and add it to .gitignore."' /tmp/gl.json | sort -u
+            fi
+            echo ""
+            echo "     Reason: real credentials committed to the repo are readable by anyone with"
+            echo "             repo access and were exposed to any build-time malware."
+            echo "     Action: 1) ROTATE each secret above immediately (it is already exposed in git history),"
+            echo "             2) 'git rm --cached <file>' and add the path to .gitignore,"
+            echo "             3) if it must exist for CI, move it to encrypted GitHub Actions secrets."
+            exit 1
+          fi
+
+      # 3) Dependency lockfile integrity — advisory (never blocks the gate).
+      #    Uses the repo's ACTUAL package manager (matches the Dockerfile),
+      #    with a frozen/immutable install so a lockfile that disagrees with
+      #    package.json is surfaced. --ignore-scripts blocks postinstall hooks.
+      - name: Verify dependency lockfile integrity (advisory)
+        continue-on-error: true
+        run: |
+          [ -f package.json ] || { echo "No package.json — skipping."; exit 0; }
+          n=$(ls yarn.lock pnpm-lock.yaml package-lock.json 2>/dev/null | wc -l | tr -d ' ')
+          [ "$n" -gt 1 ] && echo "::warning::multiple JS lockfiles present ($n) — keep only the one your build uses"
+          if [ -f yarn.lock ]; then
+            echo "Detected yarn.lock"; corepack enable || true
+            yarn install --immutable --mode=skip-build || yarn install --frozen-lockfile --ignore-scripts
+          elif [ -f pnpm-lock.yaml ]; then
+            echo "Detected pnpm-lock.yaml"; corepack enable || true
+            pnpm install --frozen-lockfile --ignore-scripts
+          elif [ -f package-lock.json ]; then
+            echo "Detected package-lock.json"; npm ci --ignore-scripts
+          else
+            echo "package.json but no lockfile — skipping integrity check."
+          fi
