@@ -35,4 +35,7 @@ regexes = [
   # restrictions + Firebase App Check, not hiding them. (Service-account creds
   # are JSON, not AIza, and are still caught.)
   '''AIza[0-9A-Za-z_\-]{10,}''',
+  # base64-encoded Google/Firebase API keys (some apps store them base64 and
+  # decode at runtime). base64("AIza") == "QUl6". Still client-side, not secret.
+  '''QUl6[A-Za-z0-9+/_=-]{10,}''',
 ]
