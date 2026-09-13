@@ -20,6 +20,9 @@ paths = [
   '''(^|/)tests?/''',                                  # test suites carry deliberately-fake credentials
   '''\.env\.example$''',                               # documented sample env, no real values
   '''(^|/)resources/js/.*[Gg]oogle[Mm]aps.*\.js$''',   # client-side Maps key (restrict in the GCP console instead)
+  '''(^|/)google-services\.json$''',                   # Firebase Android config — keys ship in the APK (client-side)
+  '''(^|/)GoogleService-Info\.plist$''',               # Firebase iOS config — client-side
+  '''(^|/)firebase_app_id_file\.json$''',              # Firebase CLI-generated client config
 ]
 
 # Value patterns (matched against the detected secret) — extra safety net so
